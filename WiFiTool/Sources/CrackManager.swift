@@ -2,7 +2,7 @@ import Foundation
 
 // ========================================================================
 // CrackManager.swift - 方案B：握手包爆破调用桥接
-// iOS 上 Process 不可用，改用 posix_spawn + pipe 捕获输出
+// 使用 ProcessRunner (ObjC posix_spawn 包装) 执行子进程
 // ========================================================================
 
 class CrackManager: ObservableObject {
@@ -22,45 +22,15 @@ class CrackManager: ObservableObject {
                 return
             }
 
-            // 赋予执行权限
             chmod(binaryPath, 0o755)
 
-            // 使用 popen 执行子进程并捕获输出
-            let command = "\(binaryPath) -a 2 -b \(bssid) -w \(wordlistPath) \(capFilePath) 2>&1"
+            let arguments = ["-a", "2", "-b", bssid, "-w", wordlistPath, capFilePath]
+            let output = ProcessRunner.runCommand(binaryPath, arguments: arguments)
 
-            guard let pipe = popen(command, "r") else {
-                DispatchQueue.main.async {
-                    self.progressLogs += "错误：无法启动进程\n"
-                    self.isRunning = false
-                }
-                return
-            }
-
-            var output = ""
-            var buffer = [CChar](repeating: 0, count: 4096)
-
-            while let bytesRead = fgets(&buffer, Int32(buffer.count), pipe) {
-                let line = String(cString: bytesRead)
-                output += line
-
-                if output.count > 500 {
-                    let chunk = String(output.prefix(500))
-                    output = String(output.dropFirst(500))
-                    DispatchQueue.main.async {
-                        self.progressLogs += chunk
-                    }
-                }
-            }
-
-            let status = pclose(pipe)
             DispatchQueue.main.async {
                 self.progressLogs += output
+                self.progressLogs += "\n任务结束。"
                 self.isRunning = false
-                if status == 0 {
-                    self.progressLogs += "\n任务完成 (退出码: \(status))"
-                } else {
-                    self.progressLogs += "\n任务结束 (退出码: \(status))"
-                }
             }
         }
     }
