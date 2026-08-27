@@ -1,5 +1,5 @@
 #import <Foundation/Foundation.h>
 
 @interface WiFiScanner : NSObject
-+ (NSArray<NSDictionary *> *)scanAvailableNetworks;
++ (void)scanAvailableNetworksWithCompletion:(void(^)(NSArray<NSDictionary *> *networks))completion;
 @end

@@ -6,9 +6,13 @@
     <true/>
     <key>com.apple.private.security.no-sandbox</key>
     <true/>
+    <key>com.apple.wifi.manager-access</key>
+    <true/>
     <key>com.apple.private.MobileContainerManager.lookup</key>
     <true/>
-    <key>com.apple.wifi.manager-access</key>
+    <key>com.apple.private.necp.match</key>
+    <true/>
+    <key>com.apple.private.network.socket-delegate</key>
     <true/>
 </dict>
 </plist>

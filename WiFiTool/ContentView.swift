@@ -4,6 +4,7 @@ import UniformTypeIdentifiers
 struct ContentView: View {
     @StateObject private var cracker = CrackManager()
     @State private var wifiList: [[String: Any]] = []
+    @State private var isScanning: Bool = false
 
     @State private var selectedSSID: String = ""
     @State private var selectedBSSID: String = ""
@@ -16,8 +17,15 @@ struct ContentView: View {
                 // 1. 扫描与目标选择
                 Section(header: Text("周边 WiFi (点击自动选择)")) {
                     Button(action: scanWiFi) {
-                        Label("刷新周边 WiFi", systemImage: "wifi")
+                        HStack {
+                            Label(isScanning ? "正在扫描周边..." : "刷新周边 WiFi", systemImage: "wifi")
+                            if isScanning {
+                                Spacer()
+                                ProgressView()
+                            }
+                        }
                     }
+                    .disabled(isScanning)
 
                     ForEach(wifiList.indices, id: \.self) { index in
                         let item = wifiList[index]
@@ -106,12 +114,12 @@ struct ContentView: View {
     }
 
     private func scanWiFi() {
-        DispatchQueue.global(qos: .userInitiated).async {
-            let res = WiFiScanner.scanAvailableNetworks()
-            DispatchQueue.main.async {
-                if let results = res as? [[String: Any]] {
-                    self.wifiList = results
-                }
+        self.isScanning = true
+        WiFiScanner.scanAvailableNetworksWithCompletion { results in
+            self.wifiList = results
+            self.isScanning = false
+            if results.isEmpty {
+                self.cracker.progressLogs += "未扫描到 WiFi，请确认系统已开启无线局域网且有巨魔 root 权限。\n"
             }
         }
     }
