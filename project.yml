@@ -4,6 +4,9 @@ options:
   deploymentTarget:
     iOS: "15.0"
   developmentLanguage: zh-Hans
+  xcodeVersion: "15.0"
+  createIntermediateGroups: true
+  generateEmptyDirectories: true
 settings:
   base:
     SWIFT_VERSION: "5.0"
@@ -15,6 +18,8 @@ settings:
     IPHONEOS_DEPLOYMENT_TARGET: "15.0"
     ENABLE_BITCODE: NO
     TARGETED_DEVICE_FAMILY: "1,2"
+    OBJECT_VERSION: "55"
+    COMPATIBILITY_VERSION: "Xcode 14.0"
 targets:
   WiFiTool:
     type: application
