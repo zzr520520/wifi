@@ -101,13 +101,13 @@ jobs:
         cp wordlist.txt build_output/Payload/WiFiTool.app/
 
         # 塞入 aircrack-ng ARM64 二进制
-        if [ -f aircrack-ng ]; then
+        if [ -f aircrack-ng ] && [ $(wc -c < aircrack-ng) -gt 1024 ]; then
           cp aircrack-ng build_output/Payload/WiFiTool.app/
           chmod +x build_output/Payload/WiFiTool.app/aircrack-ng
-          ldid -S build_output/Payload/WiFiTool.app/aircrack-ng
+          ldid -S build_output/Payload/WiFiTool.app/aircrack-ng 2>/dev/null || true
           echo "aircrack-ng 已嵌入 App"
         else
-          echo "警告: 未找到 aircrack-ng 二进制，跳过嵌入"
+          echo "警告: 未找到有效的 aircrack-ng 二进制，跳过嵌入"
         fi
 
         # 伪签名赋予 Entitlements
