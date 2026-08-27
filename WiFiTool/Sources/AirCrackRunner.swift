@@ -40,6 +40,7 @@ class AirCrackRunner: ObservableObject {
 
                 runner.onOutput = { [weak self] output in
                     guard let self = self else { return }
+                    guard let output = output else { return }
                     // 过滤回车符，实时更新日志
                     let cleanStr = output.replacingOccurrences(of: "\r", with: "\n")
                     self.logs += cleanStr

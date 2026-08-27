@@ -85,7 +85,9 @@ struct ContentView: View {
                         Button(action: { cracker.stopCrack() }) {
                             HStack {
                                 Spacer()
-                                Label("停止计算", systemImage: "stop.fill").foregroundColor(.red).fontWeight(.bold)
+                                Label("停止计算", systemImage: "stop.fill")
+                                    .foregroundColor(.red)
+                                    .font(.headline.bold())
                                 Spacer()
                             }
                         }
@@ -93,7 +95,8 @@ struct ContentView: View {
                         Button(action: startOfflineCrack) {
                             HStack {
                                 Spacer()
-                                Label("开始极速跑包", systemImage: "bolt.fill").fontWeight(.bold)
+                                Label("开始极速跑包", systemImage: "bolt.fill")
+                                    .font(.headline.bold())
                                 Spacer()
                             }
                         }
