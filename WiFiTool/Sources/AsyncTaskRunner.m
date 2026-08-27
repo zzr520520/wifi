@@ -6,9 +6,10 @@
 
 extern char **environ;
 
-@interface AsyncTaskRunner ()
+@interface AsyncTaskRunner () {
+    int _pipeFd[2];
+}
 @property (nonatomic, assign) pid_t childPid;
-@property (nonatomic, assign) int pipeFd[2];
 @property (nonatomic, strong) NSThread *readThread;
 @property (nonatomic, strong) NSThread *waitThread;
 @property (nonatomic, assign) BOOL running;
@@ -30,17 +31,17 @@ extern char **environ;
 - (void)launchWithPath:(NSString *)execPath arguments:(NSArray<NSString *> *)arguments {
     if (self.running) return;
 
-    if (pipe(self.pipeFd) != 0) {
+    if (pipe(_pipeFd) != 0) {
         if (self.onOutput) self.onOutput(@"错误：无法创建管道\n");
         return;
     }
 
     posix_spawn_file_actions_t actions;
     posix_spawn_file_actions_init(&actions);
-    posix_spawn_file_actions_adddup2(&actions, self.pipeFd[1], STDOUT_FILENO);
-    posix_spawn_file_actions_adddup2(&actions, self.pipeFd[1], STDERR_FILENO);
-    posix_spawn_file_actions_addclose(&actions, self.pipeFd[0]);
-    posix_spawn_file_actions_addclose(&actions, self.pipeFd[1]);
+    posix_spawn_file_actions_adddup2(&actions, _pipeFd[1], STDOUT_FILENO);
+    posix_spawn_file_actions_adddup2(&actions, _pipeFd[1], STDERR_FILENO);
+    posix_spawn_file_actions_addclose(&actions, _pipeFd[0]);
+    posix_spawn_file_actions_addclose(&actions, _pipeFd[1]);
 
     NSMutableArray *argv = [NSMutableArray arrayWithObject:execPath];
     [argv addObjectsFromArray:arguments];
@@ -55,13 +56,13 @@ extern char **environ;
     int spawnResult = posix_spawn(&pid, [execPath UTF8String], &actions, NULL, (char *const *)cArgv, environ);
 
     posix_spawn_file_actions_destroy(&actions);
-    close(self.pipeFd[1]);
-    self.pipeFd[1] = -1;
+    close(_pipeFd[1]);
+    _pipeFd[1] = -1;
     free(cArgv);
 
     if (spawnResult != 0) {
-        close(self.pipeFd[0]);
-        self.pipeFd[0] = -1;
+        close(_pipeFd[0]);
+        _pipeFd[0] = -1;
         if (self.onOutput) {
             self.onOutput([NSString stringWithFormat:@"posix_spawn 失败 (错误码: %d)\n", spawnResult]);
         }
@@ -85,7 +86,7 @@ extern char **environ;
     @autoreleasepool {
         char buffer[8192];
         ssize_t bytesRead;
-        while (self.running && (bytesRead = read(self.pipeFd[0], buffer, sizeof(buffer))) > 0) {
+        while (self.running && (bytesRead = read(_pipeFd[0], buffer, sizeof(buffer))) > 0) {
             NSData *data = [NSData dataWithBytes:buffer length:bytesRead];
             NSString *str = [[NSString alloc] initWithData:data encoding:NSUTF8StringEncoding];
             if (str && self.onOutput) {
@@ -94,9 +95,9 @@ extern char **environ;
                 });
             }
         }
-        if (self.pipeFd[0] >= 0) {
-            close(self.pipeFd[0]);
-            self.pipeFd[0] = -1;
+        if (_pipeFd[0] >= 0) {
+            close(_pipeFd[0]);
+            _pipeFd[0] = -1;
         }
     }
 }
@@ -127,8 +128,8 @@ extern char **environ;
 
 - (void)dealloc {
     [self terminate];
-    if (self.pipeFd[0] >= 0) close(self.pipeFd[0]);
-    if (self.pipeFd[1] >= 0) close(self.pipeFd[1]);
+    if (_pipeFd[0] >= 0) close(_pipeFd[0]);
+    if (_pipeFd[1] >= 0) close(_pipeFd[1]);
 }
 
 @end
