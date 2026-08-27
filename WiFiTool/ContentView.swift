@@ -115,13 +115,17 @@ struct ContentView: View {
 
     private func scanWiFi() {
         self.isScanning = true
-        WiFiScanner.scanAvailableNetworks { results in
+        self.cracker.progressLogs = "正在向网卡发送探测广播...\n"
+
+        WiFiScanner.scanAvailableNetworks { results, debugLog in
             if let res = results as? [[String: Any]] {
                 self.wifiList = res
             }
             self.isScanning = false
+            self.cracker.progressLogs += debugLog
+
             if results == nil || results!.isEmpty {
-                self.cracker.progressLogs += "未扫描到 WiFi，请确认系统已开启无线局域网且有巨魔 root 权限。\n"
+                self.cracker.progressLogs += "请确保手机右上角控制中心已开启 Wi-Fi 开关。\n"
             }
         }
     }

@@ -3,10 +3,8 @@
 #import <dlfcn.h>
 
 // ========================================================================
-// WiFiScanner.m - RootHide/越狱环境兼容版
-// 方案1: CoreWiFi.framework CWFInterface (iOS 15-17 最稳私有库)
-// 方案2: MobileWiFi.framework 降级回退
-// + CLLocationManager 请求定位授权 (iOS 17 硬性要求)
+// WiFiScanner.m - iOS 17 XPC + 网卡绑定 + debugLog 版本
+// 修复：wifid XPC 静默拒绝 + CWFInterface 需显式扫描参数
 // ========================================================================
 
 @interface WiFiScanner () <CLLocationManagerDelegate>
@@ -37,56 +35,112 @@ static WiFiScanner *sharedInstance = nil;
     return self;
 }
 
-+ (void)scanAvailableNetworksWithCompletion:(void(^)(NSArray<NSDictionary *> *networks))completion {
-    // 确保初始化并请求定位
++ (void)scanAvailableNetworksWithCompletion:(void(^)(NSArray<NSDictionary *> *networks, NSString *debugLog))completion {
     [WiFiScanner shared];
 
     dispatch_async(dispatch_get_global_queue(DISPATCH_QUEUE_PRIORITY_HIGH, 0), ^{
         NSMutableArray *networks = [NSMutableArray array];
+        NSMutableString *debug = [NSMutableString string];
 
-        // 方案 1: 优先尝试 CoreWiFi (iOS 15-17 最稳私有库)
-        void *cwHandle = dlopen("/System/Library/PrivateFrameworks/CoreWiFi.framework/CoreWiFi", RTLD_LAZY);
-        if (cwHandle) {
+        // 方案 1: CoreWiFi.framework CWFInterface (iOS 17 带扫描参数)
+        void *handle = dlopen("/System/Library/PrivateFrameworks/CoreWiFi.framework/CoreWiFi", RTLD_LAZY);
+        if (!handle) {
+            [debug appendString:@"[CoreWiFi] 无法加载动态库\n"];
+        } else {
             Class CWFInterfaceClass = NSClassFromString(@"CWFInterface");
-            if (CWFInterfaceClass) {
+            if (!CWFInterfaceClass) {
+                [debug appendString:@"[CoreWiFi] CWFInterface 类未找到\n"];
+            } else {
                 id interface = [[CWFInterfaceClass alloc] init];
-                if ([interface respondsToSelector:NSSelectorFromString(@"activate")]) {
+                if (![interface respondsToSelector:NSSelectorFromString(@"activate")]) {
+                    [debug appendString:@"[CoreWiFi] activate 方法不可用\n"];
+                } else {
                     #pragma clang diagnostic push
                     #pragma clang diagnostic ignored "-Warc-performSelector-leaks"
                     [interface performSelector:NSSelectorFromString(@"activate")];
+                    [debug appendString:@"[CoreWiFi] 接口已激活\n"];
 
-                    if ([interface respondsToSelector:NSSelectorFromString(@"performScanWithType:error:")]) {
-                        NSInvocation *inv = [NSInvocation invocationWithMethodSignature:[CWFInterfaceClass instanceMethodSignatureForSelector:NSSelectorFromString(@"performScanWithType:error:")]];
+                    // 构建 iOS 17 标准扫描参数
+                    Class CWFScanParamsClass = NSClassFromString(@"CWFScanParameters");
+                    id params = nil;
+                    if (CWFScanParamsClass) {
+                        params = [[CWFScanParamsClass alloc] init];
+                        [params setValue:@(0) forKey:@"scanType"];
+                        [debug appendString:@"[CoreWiFi] 扫描参数已构建 (scanType=0)\n"];
+                    } else {
+                        [debug appendString:@"[CoreWiFi] CWFScanParameters 类未找到\n"];
+                    }
+
+                    NSSet *scanResults = nil;
+
+                    // 优先尝试 performScanWithParameters:error:
+                    SEL scanWithParams = NSSelectorFromString(@"performScanWithParameters:error:");
+                    if ([interface respondsToSelector:scanWithParams]) {
+                        NSInvocation *inv = [NSInvocation invocationWithMethodSignature:[CWFInterfaceClass instanceMethodSignatureForSelector:scanWithParams]];
                         [inv setTarget:interface];
-                        [inv setSelector:NSSelectorFromString(@"performScanWithType:error:")];
-                        NSInteger type = 0; // 全频段扫描
-                        void *nilErr = nil;
-                        [inv setArgument:&type atIndex:2];
-                        [inv setArgument:&nilErr atIndex:3];
+                        [inv setSelector:scanWithParams];
+                        [inv setArgument:&params atIndex:2];
+                        NSError *scanError = nil;
+                        [inv setArgument:&scanError atIndex:3];
                         [inv invoke];
 
-                        CFTypeRef scanResultsRaw = NULL;
-                        [inv getReturnValue:&scanResultsRaw];
-                        NSSet *scanResults = (__bridge_transfer NSSet *)scanResultsRaw;
+                        CFTypeRef retVal = NULL;
+                        [inv getReturnValue:&retVal];
+                        scanResults = (__bridge_transfer NSSet *)retVal;
 
-                        for (id scanObj in scanResults) {
-                            NSString *ssid = [scanObj valueForKey:@"networkName"] ?: @"(隐藏网络)";
-                            NSString *bssid = [scanObj valueForKey:@"BSSID"] ?: @"";
-                            NSNumber *rssi = [scanObj valueForKey:@"RSSI"] ?: @(0);
+                        if (scanError) {
+                            [debug appendFormat:@"[CoreWiFi] 扫描失败: %@\n", scanError.localizedDescription];
+                        }
+                        [debug appendString:@"[CoreWiFi] 已调用 performScanWithParameters:error:\n"];
+                    } else {
+                        // 降级: performScanWithType:error:
+                        SEL scanWithType = NSSelectorFromString(@"performScanWithType:error:");
+                        if ([interface respondsToSelector:scanWithType]) {
+                            NSInvocation *inv = [NSInvocation invocationWithMethodSignature:[CWFInterfaceClass instanceMethodSignatureForSelector:scanWithType]];
+                            [inv setTarget:interface];
+                            [inv setSelector:scanWithType];
+                            NSInteger type = 0;
+                            [inv setArgument:&type atIndex:2];
+                            NSError *scanError = nil;
+                            [inv setArgument:&scanError atIndex:3];
+                            [inv invoke];
 
-                            if (ssid.length > 0) {
+                            CFTypeRef retVal = NULL;
+                            [inv getReturnValue:&retVal];
+                            scanResults = (__bridge_transfer NSSet *)retVal;
+
+                            if (scanError) {
+                                [debug appendFormat:@"[CoreWiFi] 扫描失败: %@\n", scanError.localizedDescription];
+                            }
+                            [debug appendString:@"[CoreWiFi] 已调用 performScanWithType:error:\n"];
+                        } else {
+                            [debug appendString:@"[CoreWiFi] 扫描方法均不可用\n"];
+                        }
+                    }
+
+                    if (scanResults && scanResults.count > 0) {
+                        for (id network in scanResults) {
+                            NSString *ssid = [network valueForKey:@"networkName"] ?: @"(隐藏网络)";
+                            NSString *bssid = [network valueForKey:@"BSSID"] ?: @"";
+                            NSNumber *rssi = [network valueForKey:@"RSSI"] ?: @(0);
+
+                            if (bssid.length > 0) {
                                 [networks addObject:@{@"ssid": ssid, @"bssid": bssid, @"rssi": rssi}];
                             }
                         }
+                        [debug appendFormat:@"[CoreWiFi] 扫描成功，捕获到 %lu 个网络\n", (unsigned long)networks.count];
+                    } else {
+                        [debug appendString:@"[CoreWiFi] 扫描返回结果为空 (0 APs)\n"];
                     }
                     #pragma clang diagnostic pop
                 }
             }
-            dlclose(cwHandle);
+            dlclose(handle);
         }
 
-        // 方案 2: 若 CoreWiFi 未取到，回落到系统 wifid 接口
+        // 方案 2: MobileWiFi 降级
         if (networks.count == 0) {
+            [debug appendString:@"[MobileWiFi] 尝试降级方案...\n"];
             void *mwHandle = dlopen("/System/Library/PrivateFrameworks/MobileWiFi.framework/MobileWiFi", RTLD_LAZY);
             if (mwHandle) {
                 typedef void* (*WiFiManagerClientCreateFunc)(CFAllocatorRef, int);
@@ -117,18 +171,29 @@ static WiFiScanner *sharedInstance = nil;
                                     }
                                 }
                                 CFRelease(list);
+                                [debug appendFormat:@"[MobileWiFi] 降级方案捕获 %lu 个网络\n", (unsigned long)networks.count];
+                            } else {
+                                [debug appendString:@"[MobileWiFi] copyNetworks 返回空\n"];
                             }
+                        } else {
+                            [debug appendString:@"[MobileWiFi] 未找到 WiFi 设备\n"];
                         }
                         if (devs) CFRelease(devs);
                         CFRelease(mgr);
+                    } else {
+                        [debug appendString:@"[MobileWiFi] WiFiManagerClientCreate 失败\n"];
                     }
+                } else {
+                    [debug appendString:@"[MobileWiFi] 符号解析失败\n"];
                 }
                 dlclose(mwHandle);
+            } else {
+                [debug appendString:@"[MobileWiFi] 无法加载动态库\n"];
             }
         }
 
         dispatch_async(dispatch_get_main_queue(), ^{
-            completion([networks copy]);
+            completion([networks copy], [debug copy]);
         });
     });
 }
