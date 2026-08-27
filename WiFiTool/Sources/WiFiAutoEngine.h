@@ -1,9 +1,5 @@
 #import <Foundation/Foundation.h>
 
-@interface WiFiScanner : NSObject
-+ (void)scanAvailableNetworksWithCompletion:(void(^)(NSArray<NSDictionary<NSString *, id> *> *networks, NSString *debugLog))completion;
-@end
-
 @interface WiFiAutoEngine : NSObject
 + (NSString *)calculateDefaultKeyWithSSID:(NSString *)ssid bssid:(NSString *)bssid;
 + (void)tryConnectSSID:(NSString *)ssid password:(NSString *)password completion:(void(^)(BOOL success, NSError *error))completion;

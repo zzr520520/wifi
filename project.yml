@@ -31,6 +31,7 @@ targets:
           - "**/.DS_Store"
     dependencies:
       - sdk: CoreLocation.framework
+      - sdk: NetworkExtension.framework
     info:
       path: WiFiTool/Info.plist
       properties:
