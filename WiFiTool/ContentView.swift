@@ -116,7 +116,11 @@ struct ContentView: View {
 
     // 阶段 3: 智能拓扑字典轮询
     private func runSmartCandidates(ssid: String, bssid: String) {
-        let candidates = WiFiSmartSolver.generateSmartCandidates(forSSID: ssid, bssid: bssid)
+        guard let candidates = WiFiSmartSolver.generateSmartCandidates(forSSID: ssid, bssid: bssid) as? [String] else {
+            self.logContent += "❌ [失败] 无法生成候选词列表。\n"
+            self.isSolving = false
+            return
+        }
         self.logContent += "🧠 [阶段 3] 生成智能拓扑候选词 \(candidates.count) 个，开始快速测通...\n"
         self.tryCandidateList(ssid: ssid, list: candidates, index: 0)
     }
