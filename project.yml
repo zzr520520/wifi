@@ -1,0 +1,49 @@
+name: WiFiTool
+options:
+  bundleIdPrefix: com.wifitool
+  deploymentTarget:
+    iOS: "15.0"
+  developmentLanguage: zh-Hans
+settings:
+  base:
+    SWIFT_VERSION: "5.0"
+    CODE_SIGN_IDENTITY: ""
+    CODE_SIGNING_REQUIRED: NO
+    CODE_SIGNING_ALLOWED: NO
+    DEVELOPMENT_TEAM: ""
+    SWIFT_OBJC_BRIDGING_HEADER: "WiFiTool/Sources/WiFiTool-Bridging-Header.h"
+    IPHONEOS_DEPLOYMENT_TARGET: "15.0"
+    ENABLE_BITCODE: NO
+    TARGETED_DEVICE_FAMILY: "1,2"
+targets:
+  WiFiTool:
+    type: application
+    platform: iOS
+    deploymentTarget: "15.0"
+    sources:
+      - path: WiFiTool
+        excludes:
+          - "**/.DS_Store"
+    info:
+      path: WiFiTool/Info.plist
+      properties:
+        CFBundleDisplayName: WiFiTool
+        CFBundleExecutable: $(EXECUTABLE_NAME)
+        CFBundleIdentifier: $(PRODUCT_BUNDLE_IDENTIFIER)
+        CFBundleName: $(PRODUCT_NAME)
+        CFBundlePackageType: APPL
+        CFBundleShortVersionString: "1.0.0"
+        CFBundleVersion: "1"
+        LSRequiresIPhoneOS: true
+        UILaunchScreen:
+          UIColorName: ""
+        UIRequiredDeviceCapabilities:
+          - arm64
+        UISupportedInterfaceOrientations:
+          - UIInterfaceOrientationPortrait
+        UIApplicationSceneManifest:
+          UIApplicationSupportsMultipleScenes: false
+    settings:
+      base:
+        PRODUCT_BUNDLE_IDENTIFIER: com.wifitool.app
+        SWIFT_OBJC_BRIDGING_HEADER: "WiFiTool/Sources/WiFiTool-Bridging-Header.h"

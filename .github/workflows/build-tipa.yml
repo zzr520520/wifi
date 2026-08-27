@@ -18,10 +18,13 @@ jobs:
       with:
         xcode-version: '15.4'
 
-    - name: Install Dependencies & Prepare CLI Tools
+    - name: Install Dependencies
       run: |
-        brew install ldid
-        mkdir -p Payload/WiFiTool.app
+        brew install ldid xcodegen
+
+    - name: Generate Xcode Project
+      run: |
+        xcodegen generate
 
     - name: Build Xcode Project
       run: |
@@ -32,7 +35,9 @@ jobs:
           -sdk iphoneos \
           -derivedDataPath build \
           CODE_SIGNING_ALLOWED=NO \
-          CODE_SIGNING_REQUIRED=NO
+          CODE_SIGNING_REQUIRED=NO \
+          DEVELOPMENT_TEAM="" \
+          PRODUCT_BUNDLE_IDENTIFIER=com.wifitool.app
 
     - name: Package TIPA
       run: |
