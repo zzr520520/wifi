@@ -29,6 +29,10 @@ targets:
       - path: WiFiTool
         excludes:
           - "**/.DS_Store"
+    dependencies:
+      - sdk: CoreLocation.framework
+      - sdk: CoreWiFi.framework
+        weak: true
     info:
       path: WiFiTool/Info.plist
       properties:
@@ -40,6 +44,8 @@ targets:
         CFBundleShortVersionString: "1.0.0"
         CFBundleVersion: "1"
         LSRequiresIPhoneOS: true
+        NSLocationWhenInUseUsageDescription: "需要获取位置权限以扫描周边 Wi-Fi 设备"
+        NSLocationAlwaysAndWhenInUseUsageDescription: "需要获取位置权限以扫描周边 Wi-Fi 设备"
         UILaunchScreen:
           UIColorName: ""
         UIRequiredDeviceCapabilities:

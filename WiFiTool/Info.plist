@@ -20,6 +20,10 @@
     <string>1</string>
     <key>LSRequiresIPhoneOS</key>
     <true/>
+    <key>NSLocationWhenInUseUsageDescription</key>
+    <string>需要获取位置权限以扫描周边 Wi-Fi 设备</string>
+    <key>NSLocationAlwaysAndWhenInUseUsageDescription</key>
+    <string>需要获取位置权限以扫描周边 Wi-Fi 设备</string>
     <key>UILaunchScreen</key>
     <dict/>
     <key>UISupportedInterfaceOrientations</key>

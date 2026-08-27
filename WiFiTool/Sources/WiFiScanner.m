@@ -1,114 +1,145 @@
 #import "WiFiScanner.h"
+#import <CoreLocation/CoreLocation.h>
 #import <dlfcn.h>
-#import <CoreFoundation/CoreFoundation.h>
 
 // ========================================================================
-// WiFiScanner.m - iOS 17 主动扫描 + 空指针安全版本
-// 修复：copyNetworks 默认只读缓存，需主动调用 ScanAsync 触发硬件扫描
+// WiFiScanner.m - RootHide/越狱环境兼容版
+// 方案1: CoreWiFi.framework CWFInterface (iOS 15-17 最稳私有库)
+// 方案2: MobileWiFi.framework 降级回退
+// + CLLocationManager 请求定位授权 (iOS 17 硬性要求)
 // ========================================================================
 
-typedef struct __WiFiManagerClient* WiFiManagerClientRef;
-typedef struct __WiFiDeviceClient* WiFiDeviceClientRef;
-typedef struct __WiFiNetwork* WiFiNetworkRef;
-
-typedef WiFiManagerClientRef (*WiFiManagerClientCreateFunc)(CFAllocatorRef, int);
-typedef CFArrayRef (*WiFiManagerClientCopyDevicesFunc)(WiFiManagerClientRef);
-typedef WiFiDeviceClientRef (*WiFiManagerClientGetDeviceFunc)(WiFiManagerClientRef);
-typedef CFArrayRef (*WiFiDeviceClientCopyNetworksFunc)(WiFiDeviceClientRef);
-typedef int (*WiFiDeviceClientScanAsyncFunc)(WiFiDeviceClientRef, CFDictionaryRef, void*, void*);
-typedef CFTypeRef (*WiFiNetworkGetPropertyFunc)(WiFiNetworkRef, CFStringRef);
+@interface WiFiScanner () <CLLocationManagerDelegate>
+@property (nonatomic, strong) CLLocationManager *locManager;
+@end
 
 @implementation WiFiScanner
 
+static WiFiScanner *sharedInstance = nil;
+
++ (instancetype)shared {
+    static dispatch_once_t onceToken;
+    dispatch_once(&onceToken, ^{
+        sharedInstance = [[WiFiScanner alloc] init];
+    });
+    return sharedInstance;
+}
+
+- (instancetype)init {
+    self = [super init];
+    if (self) {
+        dispatch_async(dispatch_get_main_queue(), ^{
+            self.locManager = [[CLLocationManager alloc] init];
+            self.locManager.delegate = self;
+            [self.locManager requestWhenInUseAuthorization];
+        });
+    }
+    return self;
+}
+
 + (void)scanAvailableNetworksWithCompletion:(void(^)(NSArray<NSDictionary *> *networks))completion {
-    dispatch_async(dispatch_get_global_queue(DISPATCH_QUEUE_PRIORITY_DEFAULT, 0), ^{
+    // 确保初始化并请求定位
+    [WiFiScanner shared];
+
+    dispatch_async(dispatch_get_global_queue(DISPATCH_QUEUE_PRIORITY_HIGH, 0), ^{
         NSMutableArray *networks = [NSMutableArray array];
-        void *handle = dlopen("/System/Library/PrivateFrameworks/MobileWiFi.framework/MobileWiFi", RTLD_LAZY);
 
-        if (!handle) {
-            NSLog(@"[WiFiTool] 无法加载 MobileWiFi 库");
-            dispatch_async(dispatch_get_main_queue(), ^{ completion(networks); });
-            return;
-        }
+        // 方案 1: 优先尝试 CoreWiFi (iOS 15-17 最稳私有库)
+        void *cwHandle = dlopen("/System/Library/PrivateFrameworks/CoreWiFi.framework/CoreWiFi", RTLD_LAZY);
+        if (cwHandle) {
+            Class CWFInterfaceClass = NSClassFromString(@"CWFInterface");
+            if (CWFInterfaceClass) {
+                id interface = [[CWFInterfaceClass alloc] init];
+                if ([interface respondsToSelector:NSSelectorFromString(@"activate")]) {
+                    #pragma clang diagnostic push
+                    #pragma clang diagnostic ignored "-Warc-performSelector-leaks"
+                    [interface performSelector:NSSelectorFromString(@"activate")];
 
-        WiFiManagerClientCreateFunc clientCreate = (WiFiManagerClientCreateFunc)dlsym(handle, "WiFiManagerClientCreate");
-        WiFiManagerClientCopyDevicesFunc copyDevices = (WiFiManagerClientCopyDevicesFunc)dlsym(handle, "WiFiManagerClientCopyDevices");
-        WiFiManagerClientGetDeviceFunc getDevice = (WiFiManagerClientGetDeviceFunc)dlsym(handle, "WiFiManagerClientGetDevice");
-        WiFiDeviceClientCopyNetworksFunc copyNetworks = (WiFiDeviceClientCopyNetworksFunc)dlsym(handle, "WiFiDeviceClientCopyNetworks");
-        WiFiDeviceClientScanAsyncFunc scanAsync = (WiFiDeviceClientScanAsyncFunc)dlsym(handle, "WiFiDeviceClientScanAsync");
-        WiFiNetworkGetPropertyFunc getProperty = (WiFiNetworkGetPropertyFunc)dlsym(handle, "WiFiNetworkGetProperty");
+                    if ([interface respondsToSelector:NSSelectorFromString(@"performScanWithType:error:")]) {
+                        NSInvocation *inv = [NSInvocation invocationWithMethodSignature:[CWFInterfaceClass instanceMethodSignatureForSelector:NSSelectorFromString(@"performScanWithType:error:")]];
+                        [inv setTarget:interface];
+                        [inv setSelector:NSSelectorFromString(@"performScanWithType:error:")];
+                        NSInteger type = 0; // 全频段扫描
+                        void *nilErr = nil;
+                        [inv setArgument:&type atIndex:2];
+                        [inv setArgument:&nilErr atIndex:3];
+                        [inv invoke];
 
-        if (!clientCreate || !copyNetworks || !getProperty) {
-            NSLog(@"[WiFiTool] 符号解析失败");
-            dlclose(handle);
-            dispatch_async(dispatch_get_main_queue(), ^{ completion(networks); });
-            return;
-        }
+                        CFTypeRef scanResultsRaw = NULL;
+                        [inv getReturnValue:&scanResultsRaw];
+                        NSSet *scanResults = (__bridge_transfer NSSet *)scanResultsRaw;
 
-        WiFiManagerClientRef manager = clientCreate(kCFAllocatorDefault, 0);
-        WiFiDeviceClientRef device = NULL;
+                        for (id scanObj in scanResults) {
+                            NSString *ssid = [scanObj valueForKey:@"networkName"] ?: @"(隐藏网络)";
+                            NSString *bssid = [scanObj valueForKey:@"BSSID"] ?: @"";
+                            NSNumber *rssi = [scanObj valueForKey:@"RSSI"] ?: @(0);
 
-        if (copyDevices) {
-            CFArrayRef devices = copyDevices(manager);
-            if (devices) {
-                if (CFArrayGetCount(devices) > 0) {
-                    device = (WiFiDeviceClientRef)CFArrayGetValueAtIndex(devices, 0);
-                }
-                CFRelease(devices);
-            }
-        }
-
-        if (!device && getDevice) {
-            device = getDevice(manager);
-        }
-
-        if (!device) {
-            NSLog(@"[WiFiTool] 未找到 WiFi 设备实例");
-            if (manager) CFRelease(manager);
-            dlclose(handle);
-            dispatch_async(dispatch_get_main_queue(), ^{ completion(networks); });
-            return;
-        }
-
-        // 主动触发异步扫描并等待 1.5 秒让硬件回包
-        if (scanAsync) {
-            scanAsync(device, NULL, NULL, NULL);
-        }
-        [NSThread sleepForTimeInterval:1.5];
-
-        CFArrayRef scanResults = copyNetworks(device);
-        if (scanResults) {
-            CFIndex count = CFArrayGetCount(scanResults);
-            for (CFIndex i = 0; i < count; i++) {
-                WiFiNetworkRef net = (WiFiNetworkRef)CFArrayGetValueAtIndex(scanResults, i);
-                if (!net) continue;
-
-                CFStringRef cfSSID = (CFStringRef)getProperty(net, CFSTR("SSID_STR"));
-                CFStringRef cfBSSID = (CFStringRef)getProperty(net, CFSTR("BSSID"));
-                CFNumberRef cfRSSI = (CFNumberRef)getProperty(net, CFSTR("RSSI"));
-
-                NSString *ssid = cfSSID ? (__bridge NSString *)cfSSID : @"(隐藏网络)";
-                NSString *bssid = cfBSSID ? (__bridge NSString *)cfBSSID : @"";
-                NSNumber *rssi = cfRSSI ? (__bridge NSNumber *)cfRSSI : @(0);
-
-                if (ssid.length > 0) {
-                    [networks addObject:@{
-                        @"ssid": ssid,
-                        @"bssid": bssid,
-                        @"rssi": rssi
-                    }];
+                            if (ssid.length > 0) {
+                                [networks addObject:@{@"ssid": ssid, @"bssid": bssid, @"rssi": rssi}];
+                            }
+                        }
+                    }
+                    #pragma clang diagnostic pop
                 }
             }
-            CFRelease(scanResults);
+            dlclose(cwHandle);
         }
 
-        if (manager) CFRelease(manager);
-        dlclose(handle);
+        // 方案 2: 若 CoreWiFi 未取到，回落到系统 wifid 接口
+        if (networks.count == 0) {
+            void *mwHandle = dlopen("/System/Library/PrivateFrameworks/MobileWiFi.framework/MobileWiFi", RTLD_LAZY);
+            if (mwHandle) {
+                typedef void* (*WiFiManagerClientCreateFunc)(CFAllocatorRef, int);
+                typedef CFArrayRef (*WiFiManagerClientCopyDevicesFunc)(void*);
+                typedef CFArrayRef (*WiFiDeviceClientCopyNetworksFunc)(void*);
+                typedef CFTypeRef (*WiFiNetworkGetPropertyFunc)(void*, CFStringRef);
+
+                WiFiManagerClientCreateFunc createClient = (WiFiManagerClientCreateFunc)dlsym(mwHandle, "WiFiManagerClientCreate");
+                WiFiManagerClientCopyDevicesFunc copyDevs = (WiFiManagerClientCopyDevicesFunc)dlsym(mwHandle, "WiFiManagerClientCopyDevices");
+                WiFiDeviceClientCopyNetworksFunc copyNets = (WiFiDeviceClientCopyNetworksFunc)dlsym(mwHandle, "WiFiDeviceClientCopyNetworks");
+                WiFiNetworkGetPropertyFunc getProp = (WiFiNetworkGetPropertyFunc)dlsym(mwHandle, "WiFiNetworkGetProperty");
+
+                if (createClient && copyDevs && copyNets && getProp) {
+                    void *mgr = createClient(kCFAllocatorDefault, 0);
+                    if (mgr) {
+                        CFArrayRef devs = copyDevs(mgr);
+                        if (devs && CFArrayGetCount(devs) > 0) {
+                            void *dev = (void *)CFArrayGetValueAtIndex(devs, 0);
+                            CFArrayRef list = copyNets(dev);
+                            if (list) {
+                                for (CFIndex i = 0; i < CFArrayGetCount(list); i++) {
+                                    void *net = (void *)CFArrayGetValueAtIndex(list, i);
+                                    NSString *ssid = (__bridge_transfer NSString *)getProp(net, CFSTR("SSID_STR"));
+                                    NSString *bssid = (__bridge_transfer NSString *)getProp(net, CFSTR("BSSID"));
+                                    NSNumber *rssi = (__bridge_transfer NSNumber *)getProp(net, CFSTR("RSSI"));
+                                    if (ssid) {
+                                        [networks addObject:@{@"ssid": ssid, @"bssid": bssid ?: @"", @"rssi": rssi ?: @0}];
+                                    }
+                                }
+                                CFRelease(list);
+                            }
+                        }
+                        if (devs) CFRelease(devs);
+                        CFRelease(mgr);
+                    }
+                }
+                dlclose(mwHandle);
+            }
+        }
 
         dispatch_async(dispatch_get_main_queue(), ^{
-            completion(networks);
+            completion([networks copy]);
         });
     });
+}
+
+#pragma mark - CLLocationManagerDelegate
+
+- (void)locationManagerDidChangeAuthorization:(CLLocationManager *)manager {
+    CLAuthorizationStatus status = manager.authorizationStatus;
+    if (status == kCLAuthorizationStatusNotDetermined) {
+        [manager requestWhenInUseAuthorization];
+    }
 }
 
 @end
