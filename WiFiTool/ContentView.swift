@@ -116,9 +116,11 @@ struct ContentView: View {
     private func scanWiFi() {
         self.isScanning = true
         WiFiScanner.scanAvailableNetworksWithCompletion { results in
-            self.wifiList = results
+            if let res = results as? [[String: Any]] {
+                self.wifiList = res
+            }
             self.isScanning = false
-            if results.isEmpty {
+            if results == nil || results!.isEmpty {
                 self.cracker.progressLogs += "未扫描到 WiFi，请确认系统已开启无线局域网且有巨魔 root 权限。\n"
             }
         }
