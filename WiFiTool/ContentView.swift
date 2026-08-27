@@ -69,7 +69,7 @@ struct ContentView: View {
                         HStack {
                             Spacer()
                             Label("开始爆破", systemImage: "key.fill")
-                                .bold()
+                                .font(.headline)
                             Spacer()
                         }
                     }
