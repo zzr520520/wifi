@@ -122,7 +122,7 @@ struct ContentView: View {
                 self.wifiList = res
             }
             self.isScanning = false
-            self.cracker.progressLogs += debugLog
+            self.cracker.progressLogs += debugLog ?? ""
 
             if results == nil || results!.isEmpty {
                 self.cracker.progressLogs += "请确保手机右上角控制中心已开启 Wi-Fi 开关。\n"
