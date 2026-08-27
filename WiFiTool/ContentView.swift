@@ -2,7 +2,7 @@ import SwiftUI
 
 struct ContentView: View {
     @StateObject private var crackManager = CrackManager()
-    @State private var networks: [NSDictionary] = []
+    @State private var networks: [[String: Any]] = []
     @State private var isScanning = false
     @State private var selectedNetwork: String = ""
     @State private var capFilePath = ""
@@ -87,7 +87,9 @@ struct ContentView: View {
                         DispatchQueue.global(qos: .userInitiated).async {
                             let results = WiFiScanner.scanAvailableNetworks()
                             DispatchQueue.main.async {
-                                networks = results
+                                if let results = results as? [[String: Any]] {
+                                    networks = results
+                                }
                                 isScanning = false
                             }
                         }
