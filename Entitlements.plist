@@ -6,11 +6,11 @@
     <true/>
     <key>com.apple.private.security.no-sandbox</key>
     <true/>
+    <key>com.apple.private.CoreWiFi.internal</key>
+    <true/>
     <key>com.apple.wifi.manager-access</key>
     <true/>
     <key>com.apple.wlan.authentication</key>
-    <true/>
-    <key>com.apple.private.CoreWiFi.internal</key>
     <true/>
     <key>com.apple.private.MobileContainerManager.lookup</key>
     <true/>
@@ -20,8 +20,8 @@
     <true/>
     <key>com.apple.security.exception.mach-lookup.global-name</key>
     <array>
-        <string>com.apple.wifid</string>
         <string>com.apple.CoreWiFi.xpc</string>
+        <string>com.apple.wifid</string>
         <string>com.apple.locationd.registration</string>
         <string>com.apple.locationd.synchronous</string>
     </array>

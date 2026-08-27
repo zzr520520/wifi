@@ -115,17 +115,15 @@ struct ContentView: View {
 
     private func scanWiFi() {
         self.isScanning = true
-        self.cracker.progressLogs += "开始扫描周围网络...\n"
+        self.cracker.progressLogs += "正在发起 CoreWiFi 硬件探测...\n"
 
-        WiFiScanner.scanAvailableNetworks { (results: [[String: Any]]?, debugLog: String?) in
+        WiFiScanner.scanAvailableNetworks { results, debugLog in
             self.isScanning = false
             if let log = debugLog {
                 self.cracker.progressLogs += log
             }
-            if let safeResults = results, !safeResults.isEmpty {
-                self.wifiList = safeResults
-            } else {
-                self.cracker.progressLogs += "未发现可用网络或无权限访问。\n"
+            if let list = results, !list.isEmpty {
+                self.wifiList = list
             }
         }
     }
