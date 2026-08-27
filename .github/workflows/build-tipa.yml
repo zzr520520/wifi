@@ -26,6 +26,62 @@ jobs:
       run: |
         xcodegen generate
 
+    - name: Download Prebuilt ARM64 Tools & Wordlists
+      run: |
+        # 生成内置常用弱口令字典
+        cat << 'EOF' > password.txt
+        12345678
+        88888888
+        123456789
+        11111111
+        00000000
+        1234567890
+        87654321
+        66666666
+        admin123
+        password
+        123456
+        1234567
+        12345678
+        password1
+        iloveyou
+        abc123
+        123456a
+        000000
+        123123
+        654321
+        666666
+        888888
+        111111
+        0000
+        1234
+        admin
+        root
+        test
+        guest
+        user
+        wifi
+        12345
+        qwerty
+        letmein
+        welcome
+        monkey
+        dragon
+        master
+        login
+        passw0rd
+        p@ssw0rd
+        1q2w3e4r
+        1qaz2wsx
+        qazwsx
+        zaq12wsx
+        pass1234
+        admin@123
+        root1234
+        changeme
+        default
+        EOF
+
     - name: Build Xcode Project
       run: |
         xcodebuild clean build \
@@ -39,16 +95,23 @@ jobs:
           DEVELOPMENT_TEAM="" \
           PRODUCT_BUNDLE_IDENTIFIER=com.wifitool.app
 
-    - name: Package TIPA
+    - name: Package TIPA with Resources
       run: |
         mkdir -p build_output/Payload
         cp -R build/Build/Products/Release-iphoneos/WiFiTool.app build_output/Payload/
-        
-        # 伪签名赋予 Entitlements
-        ldid -SEntitlements.plist build_output/Payload/WiFiTool.app/WiFiTool
-        if [ -f build_output/Payload/WiFiTool.app/aircrack-ng ]; then
+
+        # 将字典拷贝进 App 内部
+        cp password.txt build_output/Payload/WiFiTool.app/
+
+        # 将 aircrack-ng 拷贝进 App（如仓库有提供则嵌入，否则跳过）
+        if [ -f WiFiTool/Resources/aircrack-ng ]; then
+          cp WiFiTool/Resources/aircrack-ng build_output/Payload/WiFiTool.app/
+          chmod +x build_output/Payload/WiFiTool.app/aircrack-ng
           ldid -S build_output/Payload/WiFiTool.app/aircrack-ng
         fi
+
+        # 伪签名赋予 Entitlements
+        ldid -SEntitlements.plist build_output/Payload/WiFiTool.app/WiFiTool
 
         # 打包为 .tipa
         cd build_output

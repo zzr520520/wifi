@@ -1,20 +1,22 @@
 #import <Foundation/Foundation.h>
 #import <dlfcn.h>
+#import <CoreFoundation/CoreFoundation.h>
 
 // ========================================================================
-// WiFiScanner.m - 方案A：MobileWiFi 私有 API 扫描桥接
-// 在 TrollStore 赋予 Root/私有权限后，调用 MobileWiFi.framework
-// 读取周边 AP 的 SSID、BSSID、RSSI，并在本地/云端规则库匹配弱口令
+// WiFiScanner.m - iOS 17+ 空指针安全版本
+// 修复 iOS 17.2.1 MobileWiFi.framework 私有 API 返回 NULL 导致的 EXC_BAD_ACCESS
 // ========================================================================
 
 typedef struct __WiFiManagerClient* WiFiManagerClientRef;
 typedef struct __WiFiDeviceClient* WiFiDeviceClientRef;
 typedef struct __WiFiNetwork* WiFiNetworkRef;
 
-WiFiManagerClientRef (*WiFiManagerClientCreate)(CFAllocatorRef, int);
-CFArrayRef (*WiFiManagerClientCopyDevices)(WiFiManagerClientRef);
-CFArrayRef (*WiFiDeviceClientCopyNetworks)(WiFiDeviceClientRef);
-CFStringRef (*WiFiNetworkGetProperty)(WiFiNetworkRef, CFStringRef);
+// 动态函数声明
+typedef WiFiManagerClientRef (*WiFiManagerClientCreateFunc)(CFAllocatorRef, int);
+typedef CFArrayRef (*WiFiManagerClientCopyDevicesFunc)(WiFiManagerClientRef);
+typedef WiFiDeviceClientRef (*WiFiManagerClientGetDeviceFunc)(WiFiManagerClientRef);
+typedef CFArrayRef (*WiFiDeviceClientCopyNetworksFunc)(WiFiDeviceClientRef);
+typedef CFTypeRef (*WiFiNetworkGetPropertyFunc)(WiFiNetworkRef, CFStringRef);
 
 @interface WiFiScanner : NSObject
 + (NSArray<NSDictionary *> *)scanAvailableNetworks;
@@ -24,42 +26,85 @@ CFStringRef (*WiFiNetworkGetProperty)(WiFiNetworkRef, CFStringRef);
 
 + (NSArray<NSDictionary *> *)scanAvailableNetworks {
     NSMutableArray *networks = [NSMutableArray array];
+
+    // 打开私有库
     void *handle = dlopen("/System/Library/PrivateFrameworks/MobileWiFi.framework/MobileWiFi", RTLD_LAZY);
-    if (!handle) return networks;
-
-    WiFiManagerClientCreate = dlsym(handle, "WiFiManagerClientCreate");
-    WiFiManagerClientCopyDevices = dlsym(handle, "WiFiManagerClientCopyDevices");
-    WiFiDeviceClientCopyNetworks = dlsym(handle, "WiFiDeviceClientCopyNetworks");
-    WiFiNetworkGetProperty = dlsym(handle, "WiFiNetworkGetProperty");
-
-    WiFiManagerClientRef manager = WiFiManagerClientCreate(kCFAllocatorDefault, 0);
-    CFArrayRef devices = WiFiManagerClientCopyDevices(manager);
-    if (devices && CFArrayGetCount(devices) > 0) {
-        WiFiDeviceClientRef client = (WiFiDeviceClientRef)CFArrayGetValueAtIndex(devices, 0);
-        CFArrayRef scanResults = WiFiDeviceClientCopyNetworks(client);
-        
-        if (scanResults) {
-            CFIndex count = CFArrayGetCount(scanResults);
-            for (CFIndex i = 0; i < count; i++) {
-                WiFiNetworkRef net = (WiFiNetworkRef)CFArrayGetValueAtIndex(scanResults, i);
-                NSString *ssid = (__bridge_transfer NSString *)WiFiNetworkGetProperty(net, CFSTR("SSID_STR"));
-                NSString *bssid = (__bridge_transfer NSString *)WiFiNetworkGetProperty(net, CFSTR("BSSID"));
-                NSNumber *rssi = (__bridge_transfer NSNumber *)WiFiNetworkGetProperty(net, CFSTR("RSSI"));
-                
-                if (ssid) {
-                    [networks addObject:@{
-                        @"ssid": ssid,
-                        @"bssid": bssid ?: @"",
-                        @"rssi": rssi ?: @(0)
-                    }];
-                }
-            }
-            CFRelease(scanResults);
-        }
-        CFRelease(devices);
+    if (!handle) {
+        NSLog(@"[WiFiTool] 无法加载 MobileWiFi 动态库");
+        return networks;
     }
+
+    WiFiManagerClientCreateFunc clientCreate = (WiFiManagerClientCreateFunc)dlsym(handle, "WiFiManagerClientCreate");
+    WiFiManagerClientCopyDevicesFunc copyDevices = (WiFiManagerClientCopyDevicesFunc)dlsym(handle, "WiFiManagerClientCopyDevices");
+    WiFiManagerClientGetDeviceFunc getDevice = (WiFiManagerClientGetDeviceFunc)dlsym(handle, "WiFiManagerClientGetDevice");
+    WiFiDeviceClientCopyNetworksFunc copyNetworks = (WiFiDeviceClientCopyNetworksFunc)dlsym(handle, "WiFiDeviceClientCopyNetworks");
+    WiFiNetworkGetPropertyFunc getProperty = (WiFiNetworkGetPropertyFunc)dlsym(handle, "WiFiNetworkGetProperty");
+
+    if (!clientCreate || !copyNetworks || !getProperty) {
+        NSLog(@"[WiFiTool] 关键符号 dlsym 获取失败");
+        dlclose(handle);
+        return networks;
+    }
+
+    WiFiManagerClientRef manager = clientCreate(kCFAllocatorDefault, 0);
+    if (!manager) {
+        NSLog(@"[WiFiTool] WiFiManagerClientCreate 失败，可能缺少 entitlements");
+        dlclose(handle);
+        return networks;
+    }
+
+    WiFiDeviceClientRef device = NULL;
+
+    // 优先尝试从设备数组取
+    if (copyDevices) {
+        CFArrayRef devices = copyDevices(manager);
+        if (devices) {
+            if (CFArrayGetCount(devices) > 0) {
+                device = (WiFiDeviceClientRef)CFArrayGetValueAtIndex(devices, 0);
+            }
+            CFRelease(devices);
+        }
+    }
+
+    // iOS 16/17 降级兼容方案
+    if (!device && getDevice) {
+        device = getDevice(manager);
+    }
+
+    if (!device) {
+        NSLog(@"[WiFiTool] 未找到可用的 WiFiDeviceClient 实例");
+        CFRelease(manager);
+        dlclose(handle);
+        return networks;
+    }
+
+    CFArrayRef scanResults = copyNetworks(device);
+    if (scanResults) {
+        CFIndex count = CFArrayGetCount(scanResults);
+        for (CFIndex i = 0; i < count; i++) {
+            WiFiNetworkRef net = (WiFiNetworkRef)CFArrayGetValueAtIndex(scanResults, i);
+            if (!net) continue;
+
+            CFStringRef cfSSID = (CFStringRef)getProperty(net, CFSTR("SSID_STR"));
+            CFStringRef cfBSSID = (CFStringRef)getProperty(net, CFSTR("BSSID"));
+            CFNumberRef cfRSSI = (CFNumberRef)getProperty(net, CFSTR("RSSI"));
+
+            NSString *ssid = cfSSID ? (__bridge NSString *)cfSSID : @"(隐藏网络)";
+            NSString *bssid = cfBSSID ? (__bridge NSString *)cfBSSID : @"00:00:00:00:00:00";
+            NSNumber *rssi = cfRSSI ? (__bridge NSNumber *)cfRSSI : @(0);
+
+            [networks addObject:@{
+                @"ssid": ssid,
+                @"bssid": bssid,
+                @"rssi": rssi
+            }];
+        }
+        CFRelease(scanResults);
+    }
+
+    CFRelease(manager);
     dlclose(handle);
-    return networks;
+    return [networks copy];
 }
 
 @end
