@@ -25,7 +25,7 @@ class CrackManager: ObservableObject {
             chmod(binaryPath, 0o755)
 
             let arguments = ["-a", "2", "-b", bssid, "-w", wordlistPath, capFilePath]
-            let output = ProcessRunner.runCommand(binaryPath, arguments: arguments)
+            let output = ProcessRunner.runCommand(binaryPath, arguments: arguments) ?? ""
 
             DispatchQueue.main.async {
                 self.progressLogs += output
