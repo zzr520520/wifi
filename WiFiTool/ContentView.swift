@@ -115,7 +115,7 @@ struct ContentView: View {
 
     private func scanWiFi() {
         self.isScanning = true
-        WiFiScanner.scanAvailableNetworksWithCompletion { results in
+        WiFiScanner.scanAvailableNetworks { results in
             if let res = results as? [[String: Any]] {
                 self.wifiList = res
             }
